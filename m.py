@@ -7,8 +7,8 @@ import copy
 
 POINT_SIZE = 5
 LINE_THICKNESS = 6
-W = 800
-H = 600
+W = 1000
+H = 400
 GAME_SPEED = 30
 clDkYellow = (200, 200, 0)
 clYellow = (255, 255, 0)
@@ -25,8 +25,7 @@ MODE_RUN = 100
 X = 0
 Y = 1
 CAR_COUNT = 10
-CAR_STOP = 0
-CAR_MOVE = 1
+# CAR_STOP = 0CAR_MOVE = 1
 
 params = {
     "points": [],
@@ -48,20 +47,46 @@ class Car:
     def get_random_point():
         segment = random.randrange(len(Car.graph["s"]))
         segm_pos = random.random()
-        random.randint(20, 255)
+        p1 = Car.graph["s"][segment][0]
+        p2 = Car.graph["s"][segment][1]
+        p1 = Car.graph["p"][p1]
+        p2 = Car.graph["p"][p2]
+        p = [p1[0] + (p2[0] - p1[0]) * segm_pos, p1[1] + (p2[1] - p1[1]) * segm_pos]
+        return {"xy": p, "segment": segment}
+
+    def make_route(self, dest):
+        # делаем маршрут от текущей до параметра
+        tg = copy.deepcopy(Car.graph)
+        # убираем текущую, делаем из неё 2 отрезка во временном графе
+        ps = tg["s"].pop(self.pos["segment"])
+
+        tg["s"].append((len(tg["p"]), ps[0]))
+        tg["s"].append((len(tg["p"]), ps[1]))
+        tg["p"].append(self.pos["xy"])
+
+        # убираем конечную, делаем из неё 2 отрезка во временном графе
+        if self.pos["segment"] < dest["segment"]:
+            dest["segment"] -= 1
+
+        ps = tg["s"].pop(dest["segment"])
+        tg["s"].append((len(tg["p"]), ps[0]))
+        tg["s"].append((len(tg["p"]), ps[1]))
+        tg["p"].append(self.pos["xy"])
         pass
 
-    def make_route(self):
-        sp = Car.get_random_point()
-        ep = Car.get_random_point()
-        print(sp, ep)
+    def tick(self):
+        if len(self.stops) > 0:
+            self.queue = self.make_route(self.stops.pop(0))
 
     def __init__(self):
         self.pos = Car.get_random_point()
-        self.angle = 0.0
-        self.charge = 100.0
+        # self.angle = 0.0        # self.charge = 100.0
 
-        self.mode = CAR_STOP
+        self.queue = []  # текущий маршурт
+        self.stops = []  # запланированные точки останова
+
+        self.stops.append(Car.get_random_point())
+        self.tick()
         self.route = self.make_route()
 
     def __str__(self):
@@ -74,7 +99,6 @@ def get_dist(pt1, pt2) -> float:
 
 def prepare_action(params: dict):
 
-    
     def segment_intersect(start1, end1, start2, end2):
         epsilon = 0.1
 
@@ -118,7 +142,6 @@ def prepare_action(params: dict):
             return (intersect_x, intersect_y)
         else:
             return None
-
 
     apoints = []
     tmpgraph = []
@@ -191,17 +214,21 @@ def prepare_action(params: dict):
             {"s": p0, "e": p1, "color": (random.randint(20, 255), random.randint(10, 255), random.randint(10, 255))}
         )
 
-        d = get_dist(apoints[p0], apoints[p1])
-        if not (p0 in graph_calc):
-            graph_calc[p0] = {}
-        graph_calc[p0][p1] = d
-        if not (p1 in graph_calc):
-            graph_calc[p1] = {}
-        graph_calc[p1][p0] = d
+        # d = get_dist(apoints[p0], apoints[p1])
+        # if not (p0 in graph_calc):
+        #     graph_calc[p0] = {}
+        # graph_calc[p0][p1] = d
+        # if not (p1 in graph_calc):
+        #     graph_calc[p1] = {}
+        # graph_calc[p1][p0] = d
 
     params.update(
         {
-            "g": {"p": apoints, "l": graph_calc, "s": tmpgraph},
+            "g": {
+                "p": apoints,
+                #   "l": graph_calc,
+                "s": tmpgraph,
+            },
             "draw": graph_draw,
             "cars": [],
         }
@@ -369,7 +396,6 @@ def update_screen(surf, params):
             pygame.gfxdraw.circle(surf, params["highlight"][X], params["highlight"][Y], POINT_SIZE - 1, clRed)
 
 
-
 def main():
     def do_save(points):
         with open("points.txt", "w") as pt_file:
@@ -378,7 +404,6 @@ def main():
                 pt_file.write("*\n")
                 for pt in line:
                     pt_file.write("{},{}\n".format(pt[X], pt[Y]))
-
 
     def do_load(params):
         ptr = []
@@ -412,8 +437,8 @@ def main():
     global params
     params = do_load(params)
 
-    params["mode"] == MODE_RUN
-    params = prepare_action(params)
+    # params["mode"] == MODE_RUN
+    # params = prepare_action(params)
 
     # xxx = get_line_under_mouse((100, 100), params["points"])
 
