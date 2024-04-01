@@ -4,12 +4,13 @@ import time
 import pygame.gfxdraw
 import random
 import copy
+import sys
 
 POINT_SIZE = 5
 LINE_THICKNESS = 6
 W = 1000
 H = 400
-GAME_SPEED = 30
+FPS = 10
 clDkYellow = (200, 200, 0)
 clYellow = (255, 255, 0)
 clBlack = (0, 0, 0)
@@ -24,8 +25,22 @@ MODE_DRAG = 2
 MODE_RUN = 100
 X = 0
 Y = 1
-CAR_COUNT = 10
+car_options = {
+    "count": 1,
+    "max_speed": 10.0,
+    "accel": 2,
+    "deccel": 1,
+    "min_speed": 3.0,
+}
+
+
 # CAR_STOP = 0CAR_MOVE = 1
+class AutoDict(dict):
+    def __getitem__(self, key):
+        if key not in self:
+            self[key] = type(self)()
+        return super().__getitem__(key)
+
 
 params = {
     "points": [],
@@ -52,45 +67,166 @@ class Car:
         p1 = Car.graph["p"][p1]
         p2 = Car.graph["p"][p2]
         p = [p1[0] + (p2[0] - p1[0]) * segm_pos, p1[1] + (p2[1] - p1[1]) * segm_pos]
-        return {"xy": p, "segment": segment}
+        return {"segment": segment, "xy": p}
+
+    def get_break_path(self, speed):
+        r = 0.0
+        s = self.speed
+        while s >= speed:
+            r += s
+            s -= car_options["deccel"]
+        return r
+
+    def astar(self, start, goal, g):
+        def h(node):
+            return get_dist(g["p"][node], g["p"][goal])
+
+        def reconstruct_path(cameFrom, current):
+            total_path = [current]
+            while current in cameFrom:
+                current = cameFrom[current]
+                total_path.insert(0, current)
+            return total_path
+
+        openSet = [start]
+        cameFrom = {}
+
+        gScore = {}
+        fScore = {}
+        for n in g["l"]:
+            gScore[n] = sys.maxsize
+            fScore[n] = sys.maxsize
+        gScore[start] = 0.0
+        fScore[start] = h(start)
+
+        while len(openSet) > 0:
+            new_dict = {key: fScore[key] for key in openSet if key in fScore}
+            current = min(new_dict, key=new_dict.get)
+            # current = min(my_dict, key=my_dict.get)
+            # current = the node in openSet having the lowest fScore[] value
+            if current == goal:
+                return reconstruct_path(cameFrom, current)
+
+            openSet.remove(current)
+            for neighbor in g["l"][current]:
+                tentative_gScore = gScore[current] + g["l"][current][neighbor]
+                if tentative_gScore < gScore[neighbor]:
+                    cameFrom[neighbor] = current
+                    gScore[neighbor] = tentative_gScore
+                    fScore[neighbor] = tentative_gScore + h(neighbor)
+                    if neighbor not in openSet:
+                        openSet.append(neighbor)
+
+        return None
 
     def make_route(self, dest):
         # делаем маршрут от текущей до параметра
-        tg = copy.deepcopy(Car.graph)
-        # убираем текущую, делаем из неё 2 отрезка во временном графе
-        ps = tg["s"].pop(self.pos["segment"])
+        self.temp_graph = copy.deepcopy(Car.graph)
 
-        tg["s"].append((len(tg["p"]), ps[0]))
-        tg["s"].append((len(tg["p"]), ps[1]))
-        tg["p"].append(self.pos["xy"])
+        # делаем из текущей 2 отрезка во временном графе (вдобавок к основному сегменту)
+        # проверяем, если один сегмент - то бьем его на 3 части
+        points_total = len(self.temp_graph["p"])
+        self.temp_graph["p"].append(self.pos["xy"])
+        self.temp_graph["p"].append(dest["xy"])
+        segment_src = self.temp_graph["s"][self.pos["segment"]]
+        segment_dst = self.temp_graph["s"][dest["segment"]]
 
-        # убираем конечную, делаем из неё 2 отрезка во временном графе
-        if self.pos["segment"] < dest["segment"]:
-            dest["segment"] -= 1
+        if dest["segment"] == self.pos["segment"]:
+            # если у нас один и тот же сегмент,
+            # то добавляем только переходы от src <-> dst
+            # так как не выйдем за пределы этих точек и сегмента
+            self.temp_graph["l"][points_total][points_total + 1] = get_dist(
+                self.temp_graph["p"][points_total], self.temp_graph["p"][points_total + 1]
+            )
+            self.temp_graph["l"][points_total + 1][points_total] = self.temp_graph["l"][points_total][points_total + 1]
+        else:
+            self.temp_graph["l"][points_total][segment_src[0]] = get_dist(
+                self.temp_graph["p"][points_total], self.temp_graph["p"][segment_src[0]]
+            )
+            self.temp_graph["l"][segment_src[0]][points_total] = self.temp_graph["l"][points_total][segment_src[0]]
+            self.temp_graph["l"][points_total][segment_src[1]] = get_dist(
+                self.temp_graph["p"][points_total], self.temp_graph["p"][segment_src[1]]
+            )
+            self.temp_graph["l"][segment_src[1]][points_total] = self.temp_graph["l"][points_total][segment_src[1]]
+            self.temp_graph["l"][points_total + 1][segment_dst[0]] = get_dist(
+                self.temp_graph["p"][points_total + 1], self.temp_graph["p"][segment_src[0]]
+            )
+            self.temp_graph["l"][segment_dst[0]][points_total + 1] = self.temp_graph["l"][points_total + 1][
+                segment_dst[0]
+            ]
+            self.temp_graph["l"][points_total + 1][segment_dst[1]] = get_dist(
+                self.temp_graph["p"][points_total + 1], self.temp_graph["p"][segment_dst[1]]
+            )
+            self.temp_graph["l"][segment_dst[1]][points_total + 1] = self.temp_graph["l"][points_total + 1][
+                segment_dst[1]
+            ]
+        r = self.astar(points_total, points_total + 1, self.temp_graph)
 
-        ps = tg["s"].pop(dest["segment"])
-        tg["s"].append((len(tg["p"]), ps[0]))
-        tg["s"].append((len(tg["p"]), ps[1]))
-        tg["p"].append(self.pos["xy"])
-        pass
+        return r
+        # print(r)
 
     def tick(self):
-        if len(self.stops) > 0:
-            self.queue = self.make_route(self.stops.pop(0))
+        # done = False
+        # while not done:
+        while True:
+            if self.route_3 != None:  # move current -> self.route_3
+
+                # break_path =
+                if self.route_3["dist"] <= 0.0:
+                    pass
+                elif len(self.route_2) > 0 and self.route_3["dist"] <= self.get_break_path(car_options["min_speed"]):
+                    # есть ещё точки и дистанция мала, притормаживаем
+                    self.speed -= car_options["deccel"]
+                elif len(self.route_2) == 0 and self.route_3["dist"] <= self.get_break_path(0.0):
+                    # точек нет, но дистанция мала, останавливаемся
+                    self.speed -= car_options["deccel"]
+                elif self.speed <= car_options["max_speed"]:
+                    self.speed += car_options["accel"]
+                    if self.speed > car_options["max_speed"]:
+                        self.speed = car_options["max_speed"]
+                        # применяем скорость к координатам
+
+                self.pos["xy"][X] += self.speed * self.route_3["vector"][X]
+                self.pos["xy"][Y] += self.speed * self.route_3["vector"][Y]
+                self.route_3["dist"] -= self.speed
+                break
+            elif len(self.route_2) > 0:
+                pt_index = self.route_2.pop(0)
+                dx = self.temp_graph["p"][pt_index][X] - self.pos["xy"][X]
+                dy = self.temp_graph["p"][pt_index][Y] - self.pos["xy"][Y]
+                da = abs(dx) + abs(dy)
+                self.route_3 = {
+                    # "point": self.temp_graph["p"][pt_index],
+                    "dist": get_dist(self.pos["xy"], self.temp_graph["p"][pt_index]),
+                    "vector": (dx / da, dy / da),
+                }
+            elif len(self.route_1) > 0:
+                # make route to stop point
+                self.route_2 = self.make_route(self.route_1.pop(0))
+                self.route_2.pop(0)
+
+            else:
+                break
+        # if len(self.stops) > 0:            self.queue = self.make_route(self.stops.pop(0))
 
     def __init__(self):
         self.pos = Car.get_random_point()
+        self.pos = {"segment": 0, "xy": [739.1543913161769, 75.21697760191711]}
         # self.angle = 0.0        # self.charge = 100.0
+        self.speed = 0
+        self.route_1 = []  # текущий маршурт
+        self.route_2 = []  # запланированные точки останова
+        self.route_3 = None  # запланированные точки останова
 
-        self.queue = []  # текущий маршурт
-        self.stops = []  # запланированные точки останова
+        # self.stops.append(Car.get_random_point())
+        self.route_1.append({"segment": 2, "xy": [459.5540716277437, 106.54739395259065]})
 
-        self.stops.append(Car.get_random_point())
-        self.tick()
-        self.route = self.make_route()
+        # self.tick()
+        # self.route = self.make_route()
 
     def __str__(self):
-        return f"pos:{self.pos} angle:{self.angle}"
+        # return f"pos:{self.pos} angle:{self.angle}"
+        return f"pos:{self.pos}"
 
 
 def get_dist(pt1, pt2) -> float:
@@ -206,7 +342,7 @@ def prepare_action(params: dict):
     # делаем 2 массива, один для отображения (с цветами), второй для расчётов (с обратными отрезками и расстояниями)
     # добавляем обратные отрезки в граф также добавляем дистанцию и цвет
     graph_draw = []
-    graph_calc = {}
+    graph_calc = AutoDict()
     for g in tmpgraph:
         p0 = g[0]
         p1 = g[1]
@@ -214,19 +350,19 @@ def prepare_action(params: dict):
             {"s": p0, "e": p1, "color": (random.randint(20, 255), random.randint(10, 255), random.randint(10, 255))}
         )
 
-        # d = get_dist(apoints[p0], apoints[p1])
+        d = get_dist(apoints[p0], apoints[p1])
         # if not (p0 in graph_calc):
         #     graph_calc[p0] = {}
-        # graph_calc[p0][p1] = d
+        graph_calc[p0][p1] = d
         # if not (p1 in graph_calc):
         #     graph_calc[p1] = {}
-        # graph_calc[p1][p0] = d
+        graph_calc[p1][p0] = d
 
     params.update(
         {
             "g": {
                 "p": apoints,
-                #   "l": graph_calc,
+                "l": graph_calc,
                 "s": tmpgraph,
             },
             "draw": graph_draw,
@@ -234,11 +370,11 @@ def prepare_action(params: dict):
         }
     )
     Car.initialize_static_var(params["g"])
-    for c in range(CAR_COUNT):
+    for c in range(car_options["count"]):
         params["cars"].append(Car())
 
-    for c in params["cars"]:
-        print(c)
+    # for c in params["cars"]:
+    # print(c)
     return params
 
 
@@ -364,11 +500,17 @@ def update_screen(surf, params):
             p0 = params["g"]["p"][p0]
             p1 = params["g"]["p"][p1]
 
-            pygame.draw.line(surf, l["color"], p0, p1, LINE_THICKNESS)
+            # pygame.draw.line(surf, l["color"], p0, p1, LINE_THICKNESS)
+            pygame.draw.line(surf, clGray, p0, p1, LINE_THICKNESS * 2)
+            clGray
         c = 0
         for p in params["g"]["p"]:
             text_out(p[0] + 7, p[1] - 17, f"{c}", clYellow)
             c += 1
+
+        for car in params["cars"]:
+            pygame.gfxdraw.filled_circle(surf, int(car.pos["xy"][X]), int(car.pos["xy"][Y]), POINT_SIZE, clRed)
+
     else:
         text_out(10, 10, "Edit mode", clYellow)
         # lines
@@ -425,6 +567,26 @@ def main():
         return params
 
     global font
+    # вычисляем тормозной путь
+    # два тормозных пути, один для полной остановки, второй для притормаживания перед поворотами
+
+    # speed = car_options["max_speed"]
+    # car_options["break_path"] = 0.0
+    # while speed > 0:
+    #     car_options["break_path"] += speed
+    #     speed -= car_options["deccel"]
+
+    # speed = car_options["max_speed"]
+    # car_options["deccel_path"] = 0.0
+    # while speed > car_options["min_speed"]:
+    #     car_options["deccel_path"] += speed
+    #     speed -= car_options["deccel"]
+
+    # обновляем скоростя
+    # car_options["max_speed"] /= FPS
+    car_options["accel"] /= FPS
+    car_options["deccel"] /= FPS
+    # car_options["min_speed"] /= FPS
 
     # initialize the pygame module
     pygame.init()
@@ -437,8 +599,8 @@ def main():
     global params
     params = do_load(params)
 
-    # params["mode"] == MODE_RUN
-    # params = prepare_action(params)
+    params["mode"] = MODE_RUN
+    params = prepare_action(params)
 
     # xxx = get_line_under_mouse((100, 100), params["points"])
 
@@ -446,6 +608,7 @@ def main():
     clock = pygame.time.Clock()
 
     while running:
+
         for event in pygame.event.get():
 
             if event.type == pygame.QUIT:
@@ -477,11 +640,15 @@ def main():
                 elif event.key == pygame.K_F12:
                     debug_print(params)
 
+        if params["mode"] == MODE_RUN:
+            for car in params["cars"]:
+                car.tick()
+
         update_screen(screen, params)
 
         # show all drawed things to the user
         pygame.display.update()
-        clock.tick(GAME_SPEED)
+        clock.tick(FPS)
 
 
 if __name__ == "__main__":
